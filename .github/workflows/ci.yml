@@ -18,7 +18,7 @@ jobs:
       - name: Setup
         run: |
           brew update
-          brew install ninja-build
+          brew install ninja
           brew install cmake
       - name: ccache
         uses: hendrikmuhs/ccache-action@4bcd0c14065d24d92f5e937fae51361c64048b46
