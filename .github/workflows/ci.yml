@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+      branches:
+        - aliucord-ios
+
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    runs-on: macos-12
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup
+        run: |
+          brew update
+          brew install ninja-build
+          brew install cmake
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@4bcd0c14065d24d92f5e937fae51361c64048b46
+        with:
+          key: ios
+
+      #- name: Build compiler
+      #  run: |
+      #    utils/build/configure.py ./build
+      #    cmake --build ./build --target hermesc
+      - name: Build hermes for android
+        run: ./utils/build-ios-framework.sh
+      - uses: vimtor/action-zip@v1
+        with:
+          files: build_iphoneos
+          dest: ios.zip
+      - uses: actions/upload-artifact@v3
+        with:
+          name: ios
+          path: ios.zip
