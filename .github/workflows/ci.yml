@@ -1,12 +1,6 @@
 name: CI
 
-on:
-  push:
-      branches:
-        - 0.11.0-aliucord
-
-  pull_request:
-  workflow_dispatch:
+on: [push, pull_request]
 
 jobs:
   build-android:
@@ -19,7 +13,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build
-
       - name: ccache
         uses: hendrikmuhs/ccache-action@4bcd0c14065d24d92f5e937fae51361c64048b46
         with:
@@ -29,15 +22,37 @@ jobs:
         run: |
           utils/build/configure.py ./build
           cmake --build ./build --target hermesc
-
       - name: Build hermes for android
         run: |
           cd android
-          HERMES_WS_DIR=.. ./gradlew cppruntime:assembleRelease hermes:assembleIntlRelease
-
-      - uses: actions/upload-artifact@v3
+          unset ANDROID_NDK_ROOT
+          unset ANDROID_NDK_LATEST_HOME
+          unset ANDROID_NDK_HOME
+          echo yes | sudo ${ANDROID_HOME}/tools/bin/sdkmanager --install "ndk;21.0.6113669" --sdk_root=${ANDROID_SDK_ROOT} > /dev/null
+          HERMES_WS_DIR=.. ./gradlew githubRelease
+      - uses: actions/upload-artifact@v2
         with:
           name: android
-          path: |
-            build_android/outputs/hermes-cppruntime-release.aar
-            build_android/outputs/hermes-release.aar
+          path: build_android/distributions/hermes-runtime-android-*.tar.gz
+
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup
+        run: |
+          brew install ninja
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@4bcd0c14065d24d92f5e937fae51361c64048b46
+        with:
+          key: ios
+
+      - name: Build hermes for ios
+        run: |
+          ./utils/build-ios-framework.sh
+      - uses: actions/upload-artifact@v2
+        with:
+          name: ios
+          path: build_iphoneos/API/hermes/hermes.framework
