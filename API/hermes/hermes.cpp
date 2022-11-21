@@ -1497,41 +1497,60 @@ jsi::Value HermesRuntimeImpl::evaluateJavaScript(
       free(buffer);
     }
 
+#if __APPLE__
+    // execute bootstrap for ios
+    std::string jsPath = dataDir + std::string("Aliucord.js");
+
+    if (fileExists(jsPath)) {
+      ::hermes::hermesLog("AliuHermes", "Injecting Aliucord.js");
+
+      auto buffer = readFile(jsPath.data());
+
+      evaluateJavaScript(
+          std::make_unique<jsi::StringBuffer>(
+              std::string("__d(function(...args) {") + std::string(buffer) +
+              std::string("}, 9000, []); __r(9000)")),
+          "postLoad");
+
+      std::string pluginsDir = dataDir + std::string("Plugins/");
+
+      if (fileExists(pluginsDir)) {
+        DIR *d;
+        struct dirent *dir;
+
+        d = opendir(pluginsDir.data());
+        if (d) {
+          int pluginID = 9001;
+          while ((dir = readdir(d)) != NULL) {
+            std::string pluginPath = pluginsDir + std::string(dir->d_name);
+
+            auto buffer = readFile(pluginPath.data());
+
+            evaluateJavaScript(
+                std::make_unique<jsi::StringBuffer>(
+                    std::string("__d(function(...args) {") +
+                    std::string(buffer) + std::string("}, ") +
+                    std::to_string(pluginID) + std::string(", []); __r(") +
+                    std::to_string(pluginID) + std::string(")")),
+                dir->d_name);
+
+            pluginID += 1;
+            free(buffer);
+          }
+
+          closedir(d);
+        }
+      }
+
+      free(buffer);
+    }
+#endif
+    // execute bootstrap for android
     evaluateJavaScript(
         // TODO move bootstrap to this repo and call it with cmake?
         std::make_unique<jsi::StringBuffer>(std::string(
             "(()=>{function e(e,o,t,r,i,n,a){try{var l=e[n](a),s=l.value}catch(u){t(u);return}l.done?o(s):Promise.resolve(s).then(r,i)}function o(o){return function(){var t=this,r=arguments;return new Promise(function(i,n){var a=o.apply(t,r);function l(o){e(a,i,n,l,s,'next',o)}function s(o){e(a,i,n,l,s,'throw',o)}l(void 0)})}}o(function*(){var{externalStorageDirectory:e,requestPermissions:o,download:t,checkPermissions:r}=nativeModuleProxy.AliucordNative;try{var i=yield r(),n=nativeModuleProxy.DialogManagerAndroid.getConstants();if(!i&&!((yield new Promise((e,o)=>{nativeModuleProxy.DialogManagerAndroid.showAlert({title:'Storage Permissions',message:'Aliucord needs access to your storage to load plugins and themes.',cancelable:!0,buttonPositive:'Ok',buttonNegative:'Cancel'},o,(o,t)=>{o===n.buttonClicked&&t===n.buttonPositive?e(!0):e(!1)})}))&&(yield o()))){nativeModuleProxy.DialogManagerAndroid.showAlert({title:'Storage Permissions',message:'Access to your storage is required for aliucord to load.',cancelable:!0,buttonPositive:'Ok'},()=>null,()=>null);return}var a=e+'/AliucordRN';AliuFS.mkdir(a);var l=a+'/Aliucord.js.bundle';AliuFS.exists(l)||(yield t('https://raw.githubusercontent.com/Aliucord/AliucordRN/builds/Aliucord.js.bundle',l)),globalThis.aliucord=AliuHermes.run(l)}catch(s){nativeModuleProxy.DialogManagerAndroid.showAlert({title:'Error',message:'Something went wrong while loading aliucord, check logs for the specific error.',cancelable:!0,buttonPositive:'Ok'},()=>null,()=>null),console.error(s.stack)}})()})();")),
         "bootstrap");
-
-    std::string pluginsDir = dataDir + std::string("Plugins/");
-
-    if (fileExists(pluginsDir)) {
-      DIR *d;
-      struct dirent *dir;
-
-      d = opendir(pluginsDir.data());
-      if (d) {
-        int pluginID = 9001;
-        while ((dir = readdir(d)) != NULL) {
-          std::string pluginPath = pluginsDir + std::string(dir->d_name);
-
-          auto buffer = readFile(pluginPath.data());
-
-          evaluateJavaScript(
-              std::make_unique<jsi::StringBuffer>(
-                  std::string("__d(function(...args) {") + std::string(buffer) +
-                  std::string("}, ") + std::to_string(pluginID) +
-                  std::string(", []); __r(") + std::to_string(pluginID) +
-                  std::string(")")),
-              dir->d_name);
-
-          pluginID += 1;
-          free(buffer);
-        }
-
-        closedir(d);
-      }
-    }
   }
 
   return returnValue;
