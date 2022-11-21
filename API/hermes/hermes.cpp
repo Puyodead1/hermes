@@ -9,6 +9,10 @@
 
 #include "llvh/Support/Compiler.h"
 
+#ifdef __APPLE__
+#import <CoreFoundation/CoreFoundation.h>
+#endif
+
 #include "hermes/BCGen/HBC/BytecodeDataProvider.h"
 #include "hermes/BCGen/HBC/BytecodeFileFormat.h"
 #include "hermes/BCGen/HBC/BytecodeProviderFromSrc.h"
@@ -43,6 +47,9 @@
 #include "llvh/Support/SHA1.h"
 #include "llvh/Support/raw_os_ostream.h"
 
+#include <dirent.h>
+#include <stdio.h>
+#include <sys/stat.h>
 #include <algorithm>
 #include <atomic>
 #include <limits>
@@ -1406,6 +1413,23 @@ jsi::Value HermesRuntimeImpl::evaluatePreparedJavaScript(
   });
 }
 
+char *readFile(const char *path) {
+  FILE *fp = fopen(path, "r");
+  fseek(fp, 0L, SEEK_END);
+  long size = ftell(fp);
+  fseek(fp, 0L, SEEK_SET);
+  char *buffer = (char *)calloc(size, sizeof(char));
+  fread(buffer, sizeof(char), size, fp);
+  fclose(fp);
+
+  return buffer;
+}
+
+bool fileExists(const std::string &name) {
+  struct stat buffer;
+  return (stat(name.c_str(), &buffer) == 0);
+}
+
 jsi::Value HermesRuntimeImpl::evaluateJavaScript(
     const std::shared_ptr<const jsi::Buffer> &buffer,
     const std::string &sourceURL) {
@@ -1433,22 +1457,81 @@ jsi::Value HermesRuntimeImpl::evaluateJavaScript(
             "  inject: function inject(injected) {"
             "    this.injected.push(injected); return this.injected.length - 1;"
             "  }"
-            "};"
-        )),
-        "preload"
-    );
+            "};")),
+        "preload");
   }
 
   auto returnValue =
       evaluatePreparedJavaScript(prepareJavaScript(buffer, sourceURL));
 
   if (isMainBundle) {
-    ::hermes::hermesLog("AliuHermes", "Injecting bootstrap");
+#ifdef __APPLE__
+    // Get the home directory path
+    std::string homeDir(CFStringGetCStringPtr(
+        CFURLGetString(CFCopyHomeDirectoryURL()), kCFStringEncodingUTF8));
+    std::string dataDir;
+
+    if (homeDir.find("file://") != std::string::npos) {
+      dataDir = std::string(homeDir.substr(7));
+    } else {
+      dataDir = std::string(homeDir);
+    }
+
+    dataDir = dataDir + std::string("Documents/");
+#else
+    std::string dataDir = "/sdcard/AliucordRN/";
+#endif
+    std::string fcPath = dataDir + std::string("Fosscord.js");
+
+    if (fileExists(fcPath)) {
+      ::hermes::hermesLog("AliuHermes", "Injecting Fosscord.js");
+
+      auto buffer = readFile(fcPath.data());
+
+      evaluateJavaScript(
+          std::make_unique<jsi::StringBuffer>(
+              std::string("__d(function(...args) {") + std::string(buffer) +
+              std::string("}, 9000, []); __r(9000)")),
+          "bootstrapFosscord");
+
+      free(buffer);
+    }
+
     evaluateJavaScript(
         // TODO move bootstrap to this repo and call it with cmake?
-        std::make_unique<jsi::StringBuffer>(std::string("(()=>{function e(e,o,t,r,i,n,a){try{var l=e[n](a),s=l.value}catch(u){t(u);return}l.done?o(s):Promise.resolve(s).then(r,i)}function o(o){return function(){var t=this,r=arguments;return new Promise(function(i,n){var a=o.apply(t,r);function l(o){e(a,i,n,l,s,'next',o)}function s(o){e(a,i,n,l,s,'throw',o)}l(void 0)})}}o(function*(){window.GLOBAL_ENV.GATEWAY_ENDPOINT='wss://gateway.biscord.me';var{externalStorageDirectory:e,requestPermissions:o,download:t,checkPermissions:r}=nativeModuleProxy.AliucordNative;try{var i=yield r(),n=nativeModuleProxy.DialogManagerAndroid.getConstants();if(!i&&!((yield new Promise((e,o)=>{nativeModuleProxy.DialogManagerAndroid.showAlert({title:'Storage Permissions',message:'Aliucord needs access to your storage to load plugins and themes.',cancelable:!0,buttonPositive:'Ok',buttonNegative:'Cancel'},o,(o,t)=>{o===n.buttonClicked&&t===n.buttonPositive?e(!0):e(!1)})}))&&(yield o()))){nativeModuleProxy.DialogManagerAndroid.showAlert({title:'Storage Permissions',message:'Access to your storage is required for aliucord to load.',cancelable:!0,buttonPositive:'Ok'},()=>null,()=>null);return}var a=e+'/AliucordRN';AliuFS.mkdir(a);var l=a+'/Aliucord.js.bundle';AliuFS.exists(l)||(yield t('https://raw.githubusercontent.com/Aliucord/AliucordRN/builds/Aliucord.js.bundle',l)),globalThis.aliucord=AliuHermes.run(l)}catch(s){nativeModuleProxy.DialogManagerAndroid.showAlert({title:'Error',message:'Something went wrong while loading aliucord, check logs for the specific error.',cancelable:!0,buttonPositive:'Ok'},()=>null,()=>null),console.error(s.stack)}})()})();")),
-        "bootstrap"
-    );
+        std::make_unique<jsi::StringBuffer>(std::string(
+            "(()=>{function e(e,o,t,r,i,n,a){try{var l=e[n](a),s=l.value}catch(u){t(u);return}l.done?o(s):Promise.resolve(s).then(r,i)}function o(o){return function(){var t=this,r=arguments;return new Promise(function(i,n){var a=o.apply(t,r);function l(o){e(a,i,n,l,s,'next',o)}function s(o){e(a,i,n,l,s,'throw',o)}l(void 0)})}}o(function*(){var{externalStorageDirectory:e,requestPermissions:o,download:t,checkPermissions:r}=nativeModuleProxy.AliucordNative;try{var i=yield r(),n=nativeModuleProxy.DialogManagerAndroid.getConstants();if(!i&&!((yield new Promise((e,o)=>{nativeModuleProxy.DialogManagerAndroid.showAlert({title:'Storage Permissions',message:'Aliucord needs access to your storage to load plugins and themes.',cancelable:!0,buttonPositive:'Ok',buttonNegative:'Cancel'},o,(o,t)=>{o===n.buttonClicked&&t===n.buttonPositive?e(!0):e(!1)})}))&&(yield o()))){nativeModuleProxy.DialogManagerAndroid.showAlert({title:'Storage Permissions',message:'Access to your storage is required for aliucord to load.',cancelable:!0,buttonPositive:'Ok'},()=>null,()=>null);return}var a=e+'/AliucordRN';AliuFS.mkdir(a);var l=a+'/Aliucord.js.bundle';AliuFS.exists(l)||(yield t('https://raw.githubusercontent.com/Aliucord/AliucordRN/builds/Aliucord.js.bundle',l)),globalThis.aliucord=AliuHermes.run(l)}catch(s){nativeModuleProxy.DialogManagerAndroid.showAlert({title:'Error',message:'Something went wrong while loading aliucord, check logs for the specific error.',cancelable:!0,buttonPositive:'Ok'},()=>null,()=>null),console.error(s.stack)}})()})();")),
+        "bootstrap");
+
+    std::string pluginsDir = dataDir + std::string("Plugins/");
+
+    if (fileExists(pluginsDir)) {
+      DIR *d;
+      struct dirent *dir;
+
+      d = opendir(pluginsDir.data());
+      if (d) {
+        int pluginID = 9001;
+        while ((dir = readdir(d)) != NULL) {
+          std::string pluginPath = pluginsDir + std::string(dir->d_name);
+
+          auto buffer = readFile(pluginPath.data());
+
+          evaluateJavaScript(
+              std::make_unique<jsi::StringBuffer>(
+                  std::string("__d(function(...args) {") + std::string(buffer) +
+                  std::string("}, ") + std::to_string(pluginID) +
+                  std::string(", []); __r(") + std::to_string(pluginID) +
+                  std::string(")")),
+              dir->d_name);
+
+          pluginID += 1;
+          free(buffer);
+        }
+
+        closedir(d);
+      }
+    }
   }
 
   return returnValue;
