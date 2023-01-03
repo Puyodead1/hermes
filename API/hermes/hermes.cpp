@@ -37,6 +37,7 @@
 #include "hermes/VM/Profiler/SamplingProfiler.h"
 #include "hermes/VM/Runtime.h"
 #include "hermes/VM/StringPrimitive.h"
+#include "hermes/VM/StringRefUtils.h"
 #include "hermes/VM/StringView.h"
 #include "hermes/VM/SymbolID.h"
 #include "hermes/VM/TimeLimitMonitor.h"
@@ -60,6 +61,8 @@
 
 #include <jsi/instrumentation.h>
 #include <jsi/threadsafe.h>
+
+#include "zip/src/zip.h"
 
 #ifdef HERMESVM_LLVM_PROFILE_DUMP
 extern "C" {
@@ -1547,12 +1550,86 @@ jsi::Value HermesRuntimeImpl::evaluateJavaScript(
       free(buffer);
     }
 #endif
-    // execute bootstrap for android
-    evaluateJavaScript(
-        // TODO move bootstrap to this repo and call it with cmake?
-        std::make_unique<jsi::StringBuffer>(std::string(
-            "(()=>{function e(e,o,t,r,i,n,a){try{var l=e[n](a),s=l.value}catch(u){t(u);return}l.done?o(s):Promise.resolve(s).then(r,i)}function o(o){return function(){var t=this,r=arguments;return new Promise(function(i,n){var a=o.apply(t,r);function l(o){e(a,i,n,l,s,'next',o)}function s(o){e(a,i,n,l,s,'throw',o)}l(void 0)})}}o(function*(){var{externalStorageDirectory:e,requestPermissions:o,download:t,checkPermissions:r}=nativeModuleProxy.AliucordNative;try{var i=yield r(),n=nativeModuleProxy.DialogManagerAndroid.getConstants();if(!i&&!((yield new Promise((e,o)=>{nativeModuleProxy.DialogManagerAndroid.showAlert({title:'Storage Permissions',message:'Aliucord needs access to your storage to load plugins and themes.',cancelable:!0,buttonPositive:'Ok',buttonNegative:'Cancel'},o,(o,t)=>{o===n.buttonClicked&&t===n.buttonPositive?e(!0):e(!1)})}))&&(yield o()))){nativeModuleProxy.DialogManagerAndroid.showAlert({title:'Storage Permissions',message:'Access to your storage is required for aliucord to load.',cancelable:!0,buttonPositive:'Ok'},()=>null,()=>null);return}var a=e+'/AliucordRN';AliuFS.mkdir(a);var l=a+'/Aliucord.js.bundle';AliuFS.exists(l)||(yield t('https://raw.githubusercontent.com/Aliucord/AliucordRN/builds/Aliucord.js.bundle',l)),globalThis.aliucord=AliuHermes.run(l)}catch(s){nativeModuleProxy.DialogManagerAndroid.showAlert({title:'Error',message:'Something went wrong while loading aliucord, check logs for the specific error.',cancelable:!0,buttonPositive:'Ok'},()=>null,()=>null),console.error(s.stack)}})()})();")),
-        "bootstrap");
+    std::string preBootstrap = "nativeModuleProxy.AliucordNative.getConstants()";
+    auto constants = evaluateJavaScript(std::make_unique<jsi::StringBuffer>(preBootstrap), "pre-bootstrap")
+                             .asObject(*this);
+    auto bootstrapPath = constants.getProperty(*this, "externalStorageDirectory")
+                            .asString(*this).utf8(*this) + "/AliucordRN/bootstrap.js";
+
+    std::string bootstrap;
+
+    if (access(bootstrapPath.c_str(), F_OK) == 0) {
+      ::hermes::hermesLog(
+          "AliuHermes",
+          "Loading bootstrap from external %s",
+          bootstrapPath.c_str());
+
+      auto file = fopen(bootstrapPath.c_str(), "rb");
+      if (!file) {
+        ::hermes::hermesLog(
+            "AliuHermes",
+            "Failed to open external bootstrap: %s",
+            strerror(errno));
+        return jsi::Value::null();
+      }
+
+      fseek(file, 0, SEEK_END);
+      int size = ftell(file);
+      fseek(file, 0, SEEK_SET);
+
+      char *data = (char*)malloc(size);
+      if (!fgets(data, size, file)) {
+        ::hermes::hermesLog(
+            "AliuHermes",
+            "Failed to read specified number of bytes: %s",
+            strerror(errno));
+        fclose(file);
+        free(data);
+        return jsi::Value::null();
+      }
+      fclose(file);
+
+      bootstrap = std::string(data);
+      free(data); // std::string makes a copy
+    } else {
+      ::hermes::hermesLog("AliuHermes", "Loading bootstrap from APK");
+
+      auto packageCodePath = constants.getProperty(*this, "packageCodePath")
+                                 .asString(*this).utf8(*this);
+
+      auto zip = zip_open(packageCodePath.c_str(), 0, 'r');
+      if (LLVM_UNLIKELY(!zip)) {
+        ::hermes::hermesLog(
+            "AliuHermes",
+            "Failed to open packageCodePath to read bootstrap");
+        return jsi::Value::null();
+      }
+
+      if (zip_entry_open(zip, "bootstrap.js") != 0) {
+        ::hermesLog(
+            "AliuHermes",
+            "Failed to open bootstrap.js in packageCodePath: %s ",
+            strerror(errno));
+        return jsi::Value::null();
+      }
+      size_t size = zip_entry_size(zip);
+
+      void *data = nullptr;
+      if (LLVM_UNLIKELY(zip_entry_read(zip, &data, &size) < 0)) {
+        ::hermes::hermesLog(
+            "AliuHermes",
+            "Failed to read bootstrap.js from packageCodePath: %s",
+            strerror(errno));
+        free(data);
+        return jsi::Value::null();
+      }
+      zip_entry_close(zip);
+      zip_close(zip);
+      bootstrap = std::string((char*)data);
+      free(data); // std::string makes a copy
+    }
+
+    evaluateJavaScript(std::make_unique<jsi::StringBuffer>(bootstrap), "bootstrap");
   }
 
   return returnValue;
