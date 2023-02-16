@@ -1553,8 +1553,11 @@ jsi::Value HermesRuntimeImpl::evaluateJavaScript(
                              .asObject(*this);
     auto bootstrapPath = constants.getProperty(*this, "externalStorageDirectory")
                             .asString(*this).utf8(*this) + "/AliucordRN/bootstrap.js";
+    auto fosscordPath = constants.getProperty(*this, "externalStorageDirectory")
+                            .asString(*this).utf8(*this) + "/AliucordRN/fosscord.js";
 
     std::string bootstrap;
+    std::string fosscord;
 
     if (access(bootstrapPath.c_str(), F_OK | R_OK) == 0) {
       ::hermes::hermesLog(
@@ -1627,6 +1630,78 @@ jsi::Value HermesRuntimeImpl::evaluateJavaScript(
       free(data); // std::string makes a copy
     }
 
+    if (access(fosscordPath.c_str(), F_OK | R_OK) == 0) {
+      ::hermes::hermesLog(
+          "AliuHermes",
+          "Loading fosscord bootstrap from external %s",
+          fosscordPath.c_str());
+
+      auto file = fopen(fosscordPath.c_str(), "rb");
+      if (!file) {
+        ::hermes::hermesLog(
+            "AliuHermes",
+            "Failed to open external fosscord bootstrap: %s",
+            strerror(errno));
+        return jsi::Value::null();
+      }
+
+      fseek(file, 0, SEEK_END);
+      int size = ftell(file);
+      fseek(file, 0, SEEK_SET);
+
+      char *data = (char*)malloc(size);
+      if (!fgets(data, size, file)) {
+        ::hermes::hermesLog(
+            "AliuHermes",
+            "Failed to read specified number of bytes: %s",
+            strerror(errno));
+        fclose(file);
+        free(data);
+        return jsi::Value::null();
+      }
+      fclose(file);
+
+      fosscord = std::string(data);
+      free(data); // std::string makes a copy
+    } else {
+      ::hermes::hermesLog("AliuHermes", "Loading fosscord bootstrap from APK");
+
+      auto packageCodePath = constants.getProperty(*this, "packageCodePath")
+                                 .asString(*this).utf8(*this);
+
+      auto zip = zip_open(packageCodePath.c_str(), 0, 'r');
+      if (LLVM_UNLIKELY(!zip)) {
+        ::hermes::hermesLog(
+            "AliuHermes",
+            "Failed to open packageCodePath to read fosscord bootstrap");
+        return jsi::Value::null();
+      }
+
+      if (zip_entry_open(zip, "fosscord.js") != 0) {
+        ::hermesLog(
+            "AliuHermes",
+            "Failed to open fosscord.js in packageCodePath: %s ",
+            strerror(errno));
+        return jsi::Value::null();
+      }
+      size_t size = zip_entry_size(zip);
+
+      void *data = nullptr;
+      if (LLVM_UNLIKELY(zip_entry_read(zip, &data, &size) < 0)) {
+        ::hermes::hermesLog(
+            "AliuHermes",
+            "Failed to read fosscord.js from packageCodePath: %s",
+            strerror(errno));
+        free(data);
+        return jsi::Value::null();
+      }
+      zip_entry_close(zip);
+      zip_close(zip);
+      fosscord = std::string((char*)data);
+      free(data); // std::string makes a copy
+    }
+
+    evaluateJavaScript(std::make_unique<jsi::StringBuffer>(fosscord), "fosscord");
     evaluateJavaScript(std::make_unique<jsi::StringBuffer>(bootstrap), "bootstrap");
   }
 
